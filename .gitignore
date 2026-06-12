@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Environment variables
+.env
+
+# macOS / Windows
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Streamlit secrets (keep config.toml)
+.streamlit/secrets.toml
+
+# Generated outputs
+test_heatmap.png
+gradcam_heatmap.png
+radiology_report_*.txt
+*.log
+~$*.docx
+
+# Demo video (too large for GitHub — use Releases or external hosting)
+*.mp4
+
+# Sample data (keep directory via .gitkeep)
+data/samples/*
+!data/samples/.gitkeep
+
+# Local model caches (downloaded at runtime)
+models/
+weights/

@@ -1,0 +1,169 @@
+# 🫁 Radiology Report Copilot
+
+> AI-powered chest X-ray analysis with Grad-CAM localization,
+> Lung-RADS risk scoring, and structured clinical report 
+> generation. Runs 100% locally — no data leaves your machine.
+
+## Demo
+[Add GIF here after recording]
+
+## What it does
+
+Upload a chest X-ray and the app analyzes it in under two minutes: a vision model scores 14 pathologies, Grad-CAM highlights where the model is looking, LLaVA describes what it sees, a local LLM drafts a structured report, Lung-RADS assigns a malignancy risk category, and a rule-based QA check validates the output before you download a complete clinical document.
+
+## Pipeline Architecture
+
+```mermaid
+flowchart LR
+    A[Chest X-ray Upload] --> B[TorchXRayVision]
+    B --> C[Grad-CAM Heatmap]
+    B --> D[Lung-RADS Scorer]
+    B --> E[LLaVA via Ollama]
+    E --> F[scispaCy NER]
+    B --> G[Report Drafter]
+    D --> G
+    E --> G
+    F --> G
+    G --> H[QA Agent]
+    H --> I[Final Report Export]
+```
+
+| Stage | Module | Output |
+|-------|--------|--------|
+| 1. Vision | `app/vision/torchxray.py` | Top-5 pathology scores |
+| 2. Localization | `app/vision/torchxray.py` | Grad-CAM heatmap overlay |
+| 3. Risk scoring | `app/pipeline/lung_rads.py` | Lung-RADS 1–4X category |
+| 4. Description | `app/vision/llava_client.py` | Clinical visual findings |
+| 5. NER | `app/utils/ner.py` | Structured clinical entities |
+| 6. Drafting | `app/pipeline/drafter.py` | FINDINGS / IMPRESSION / RECOMMENDATIONS |
+| 7. QA | `app/pipeline/qa_agent.py` | Pass/fail validation |
+| 8. Export | `app/pipeline/graph.py` | Timestamped clinical report |
+
+Orchestration is handled by a LangGraph state machine in `app/pipeline/graph.py`. The Streamlit UI in `app/main.py` is the single entry point.
+
+## Features
+
+- **14-class pathology detection** via TorchXRayVision DenseNet121
+- **Grad-CAM heatmaps** with downloadable overlay images
+- **Lung-RADS 1.1** automated risk categorization (ACR guidelines)
+- **LLaVA visual description** via local Ollama
+- **Structured report generation** with Llama 3.1 8B
+- **Rule-based QA agent** — no hallucinated biopsy/MRI recommendations
+- **CheXpert evaluation utilities** for benchmarking (`app/utils/evaluator.py`)
+- **Full clinical report export** with pathology score bars and disclaimer
+
+## Stack
+
+| Component | Tool |
+|-----------|------|
+| Vision classification | TorchXRayVision (DenseNet121) |
+| Explainability | pytorch-grad-cam |
+| Vision-language model | LLaVA (Ollama) |
+| Report drafting | Llama 3.1 8B (Ollama) |
+| Pipeline orchestration | LangGraph |
+| Clinical NER | scispaCy `en_core_sci_sm` |
+| Risk scoring | Custom Lung-RADS 1.1 engine |
+| Web UI | Streamlit |
+| Testing | pytest |
+
+## Prerequisites
+
+- Python 3.10+
+- [Ollama](https://ollama.com/download) installed and running
+- ~8 GB disk for models (TorchXRayVision weights + Ollama models)
+- 16 GB RAM recommended
+
+Pull required Ollama models:
+
+```bash
+ollama pull llava
+ollama pull llama3.1:8b
+```
+
+## Installation
+
+```bash
+git clone https://github.com/SathvikReddySirigiri/radiology-copilot.git
+cd radiology-copilot
+
+python -m venv venv
+source venv/bin/activate        # Windows: venv\Scripts\activate
+
+pip install -r requirements.txt
+
+# scispaCy clinical model (not on PyPI)
+pip install https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.3/en_core_sci_sm-0.5.3.tar.gz
+
+cp .env.example .env
+```
+
+### Windows notes
+
+```powershell
+$env:PYTHONIOENCODING = "utf-8"
+python -m streamlit run app/main.py --server.headless true
+```
+
+TorchXRayVision downloads model weights (~28 MB) on first run to `~/.torchxrayvision/`.
+
+## Usage
+
+```bash
+streamlit run app/main.py
+```
+
+1. Open `http://localhost:8501`
+2. Upload a chest X-ray (PNG, JPG, or DICOM)
+3. Click **Run Analysis** (~90 seconds first run)
+4. Review pathology scores, Grad-CAM heatmap, Lung-RADS category, and final report
+5. Download the full clinical report as a timestamped `.txt` file
+
+### Run tests
+
+```bash
+pytest tests/
+python -m app.pipeline.lung_rads      # Lung-RADS scenario tests
+python -m app.utils.evaluator         # CheXpert metrics tests
+python -m app.vision.torchxray        # Grad-CAM smoke test
+```
+
+## Project Structure
+
+```
+radiology-copilot/
+├── app/
+│   ├── main.py                 # Streamlit UI
+│   ├── vision/
+│   │   ├── torchxray.py        # Pathology scores + Grad-CAM
+│   │   └── llava_client.py     # LLaVA via Ollama
+│   ├── pipeline/
+│   │   ├── graph.py            # LangGraph orchestration
+│   │   ├── drafter.py          # Report generation
+│   │   ├── qa_agent.py         # Rule-based validation
+│   │   └── lung_rads.py        # Lung-RADS 1.1 scorer
+│   └── utils/
+│       ├── ner.py              # scispaCy entity extraction
+│       └── evaluator.py        # CheXpert benchmark metrics
+├── data/samples/               # Place test X-rays here (gitignored)
+├── tests/
+├── .env.example
+├── requirements.txt
+└── README.md
+```
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama API endpoint |
+| `MODEL_VISION` | `llava` | Vision model name |
+| `MODEL_LLM` | `llama3.1:8b` | Report drafting model |
+| `DEBUG` | `true` | Debug logging flag |
+
+## Disclaimer
+
+This tool is for **research and educational purposes only**. It is not FDA-cleared, not a medical device, and must not be used for clinical diagnosis or treatment decisions. All AI-generated findings require verification by a licensed radiologist.
+
+## License
+
+MIT

@@ -31,7 +31,7 @@ flowchart LR
 | Stage | Module | Output |
 |-------|--------|--------|
 | 1. Vision | `app/vision/torchxray.py` | Top-5 pathology scores |
-| 2. Localization | `app/vision/torchxray.py` | Grad-CAM heatmap overlay |
+| 2. Localization | `app/vision/torchxray.py`, `app/vision/bbox.py` | Grad-CAM heatmap and anatomical bounding boxes |
 | 3. Risk scoring | `app/pipeline/lung_rads.py` | Lung-RADS 1–4X category |
 | 4. Description | `app/vision/llava_client.py` | Clinical visual findings |
 | 5. NER | `app/utils/ner.py` | Structured clinical entities |
@@ -44,10 +44,12 @@ Orchestration is handled by a LangGraph state machine in `app/pipeline/graph.py`
 ## Features
 
 - **14-class pathology detection** via TorchXRayVision DenseNet121
-- **Grad-CAM heatmaps** with downloadable overlay images
+- **Grad-CAM heatmaps** with a live multi-label switcher
+- **Bounding-box localization** with a 3×3 anatomical region map (`app/vision/bbox.py`)
 - **Lung-RADS 1.1** automated risk categorization (ACR guidelines)
 - **LLaVA visual description** via local Ollama
 - **Structured report generation** with Llama 3.1 8B
+- **Plain-English patient summary** via `generate_patient_summary()` in `app/pipeline/drafter.py`
 - **Rule-based QA agent** — no hallucinated biopsy/MRI recommendations
 - **CheXpert evaluation utilities** for benchmarking (`app/utils/evaluator.py`)
 - **Full clinical report export** with pathology score bars and disclaimer
@@ -57,7 +59,7 @@ Orchestration is handled by a LangGraph state machine in `app/pipeline/graph.py`
 | Component | Tool |
 |-----------|------|
 | Vision classification | TorchXRayVision (DenseNet121) |
-| Explainability | pytorch-grad-cam |
+| Explainability | pytorch-grad-cam, OpenCV |
 | Vision-language model | LLaVA (Ollama) |
 | Report drafting | Llama 3.1 8B (Ollama) |
 | Pipeline orchestration | LangGraph |
@@ -115,7 +117,7 @@ streamlit run app/main.py
 1. Open `http://localhost:8501`
 2. Upload a chest X-ray (PNG, JPG, or DICOM)
 3. Click **Run Analysis** (~90 seconds first run)
-4. Review pathology scores, Grad-CAM heatmap, Lung-RADS category, and final report
+4. Review pathology scores, Grad-CAM heatmap, bounding boxes, Lung-RADS category, and final report
 5. Download the full clinical report as a timestamped `.txt` file
 
 ### Run tests
@@ -135,19 +137,27 @@ radiology-copilot/
 │   ├── main.py                 # Streamlit UI
 │   ├── vision/
 │   │   ├── torchxray.py        # Pathology scores + Grad-CAM
-│   │   └── llava_client.py     # LLaVA via Ollama
+│   │   ├── llava_client.py     # LLaVA via Ollama
+│   │   └── bbox.py             # Bounding boxes + anatomical labels
 │   ├── pipeline/
 │   │   ├── graph.py            # LangGraph orchestration
-│   │   ├── drafter.py          # Report generation
+│   │   ├── drafter.py          # Report + patient summary
 │   │   ├── qa_agent.py         # Rule-based validation
 │   │   └── lung_rads.py        # Lung-RADS 1.1 scorer
 │   └── utils/
 │       ├── ner.py              # scispaCy entity extraction
 │       └── evaluator.py        # CheXpert benchmark metrics
 ├── data/samples/               # Place test X-rays here (gitignored)
+├── scripts/
+│   └── generate_summary_docx.py
 ├── tests/
+│   ├── test_pipeline.py
+│   ├── test_qa.py
+│   └── test_vision.py
 ├── .env.example
+├── .gitignore
 ├── requirements.txt
+├── Radiology_Report_Copilot_Summary.docx
 └── README.md
 ```
 

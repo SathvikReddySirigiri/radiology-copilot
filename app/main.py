@@ -52,6 +52,9 @@ def run_pipeline_with_progress(image: Image.Image) -> dict:
     state = {
         "image": image,
         "pathology_labels": {},
+        "all_scores": {},
+        "urgent_findings": [],
+        "conflict": {},
         "heatmap_result": {},
         "all_heatmaps": {},
         "lung_rads": None,
@@ -132,7 +135,7 @@ def _render_confidence_breakdown(pathology_labels: dict) -> None:
         prediction = predictions[label]
         row = st.columns([2, 1, 1])
 
-        if score > 0.7:
+        if score >= 0.70:
             row[0].error(label)
             row[1].error(f"{score:.0%}")
             row[2].error(str(prediction))
@@ -152,7 +155,7 @@ def _render_confidence_breakdown(pathology_labels: dict) -> None:
 
 def _render_risk_level(heatmap_result: dict) -> None:
     score = heatmap_result.get("target_score", 0.0)
-    if score > 0.7:
+    if score >= 0.70:
         st.error("🔴 HIGH RISK")
         st.metric("Confidence", f"{score:.0%}")
         st.write("Immediate radiologist review recommended")
@@ -168,7 +171,7 @@ def _render_risk_level(heatmap_result: dict) -> None:
 
 st.title("🫁 Radiology Report Copilot")
 st.caption(
-    "Upload a chest X-ray → get a structured clinical report in seconds"
+    "Frontal (PA/AP) chest X-rays only. Upload an image to get a structured clinical report."
 )
 
 st.sidebar.header("Model Info")
@@ -186,8 +189,8 @@ if "uploaded_image" not in st.session_state:
     st.session_state.uploaded_image = None
 
 uploaded = st.file_uploader(
-    "Upload Chest X-ray",
-    type=["png", "jpg", "jpeg", "dcm"],
+    "Upload a frontal (PA/AP) chest X-ray",
+    type=["png", "jpg", "jpeg"],
 )
 
 image = None
@@ -195,6 +198,8 @@ if uploaded is not None:
     try:
         image = Image.open(uploaded).convert("RGB")
         st.session_state.uploaded_image = image
+        if image.width < 1000 or image.height < 1000:
+            st.warning("Low-resolution image — results may be unreliable")
         if st.session_state.pipeline_result is None:
             st.image(image, caption="Uploaded X-ray")
     except Exception as exc:
@@ -220,15 +225,38 @@ result = st.session_state.pipeline_result
 
 if result is not None:
     pathology_labels = result.get("pathology_labels", {})
+    all_scores = result.get("all_scores") or {}
     lung_rads = result.get("lung_rads")
+    urgent_findings = result.get("urgent_findings") or []
+    conflict = result.get("conflict") or {}
 
-    if pathology_labels:
+    if urgent_findings:
+        st.subheader("Urgent findings")
+        for finding in urgent_findings:
+            st.error(finding)
+
+    if conflict.get("conflict"):
+        st.warning(
+            "Conflict notice: The visual description disagreed with the "
+            "quantitative scores. Radiologist review is essential."
+        )
+    for reason in conflict.get("reasons") or []:
+        st.warning(reason)
+
+    if (
+        len(all_scores) >= 18
+        and all(0.40 <= float(score) <= 0.65 for score in all_scores.values())
+    ):
+        st.warning("Model is uncertain on this image")
+
+    score_source = all_scores or pathology_labels
+    if score_source:
         st.sidebar.subheader("This Scan")
-        positives = sum(1 for score in pathology_labels.values() if score > 0.5)
+        positives = sum(1 for score in score_source.values() if float(score) >= 0.50)
         st.sidebar.metric("Findings Detected", positives)
         st.sidebar.metric(
             "Highest Confidence",
-            f"{max(pathology_labels.values()):.0%}",
+            f"{max(score_source.values()):.0%}",
         )
         if lung_rads is not None:
             st.sidebar.metric("Lung-RADS Category", lung_rads.category_str)
@@ -299,7 +327,7 @@ if result is not None:
                 selected_heatmap.get("target_score", 0) if selected_heatmap else 0,
             )
 
-            if score > 0.7:
+            if score >= 0.70:
                 st.error("🔴 HIGH RISK")
             elif score > 0.4:
                 st.warning("🟡 MODERATE RISK")
@@ -311,7 +339,7 @@ if result is not None:
             st.markdown("**All detected findings:**")
             for label in available_labels:
                 label_score = pathology_labels.get(label, 0)
-                indicator = "🔴" if label_score > 0.7 else "🟡" if label_score > 0.4 else "🟢"
+                indicator = "🔴" if label_score >= 0.70 else "🟡" if label_score > 0.4 else "🟢"
                 if label == selected_label:
                     st.markdown(f"{indicator} **{label}: {label_score:.0%}**")
                 else:
@@ -484,8 +512,9 @@ if result is not None:
             for action in display["action_items"]:
                 st.markdown(f"- {action}")
             st.caption(
-                "Based on ACR Lung-RADS v1.1 guidelines. "
-                "This tool assists — does not replace — radiologist judgment."
+                "Lung-RADS-inspired risk category (Lung-RADS is designed for CT; "
+                "used here as a reference scale). This tool assists — does not "
+                "replace — radiologist judgment."
             )
 
         st.divider()
@@ -494,12 +523,20 @@ if result is not None:
     final_report = result.get("final_report", "")
     qa_result = result.get("qa_result", {})
 
+    with st.expander("All 18 scores"):
+        if all_scores:
+            for label, score in all_scores.items():
+                st.write(f"{label}: {score:.0%}")
+                st.progress(min(max(float(score), 0.0), 1.0))
+        else:
+            st.write("No scores available.")
+
     with st.expander("📊 Pathology Scores", expanded=True):
         if pathology_labels:
             for label, score in pathology_labels.items():
                 percentage = f"{score * 100:.0f}%"
                 label_text = f"{label} — {percentage}"
-                if score > 0.7:
+                if score >= 0.70:
                     st.error(label_text)
                 elif score > 0.4:
                     st.warning(label_text)
@@ -517,6 +554,11 @@ if result is not None:
 
     with st.expander("🔍 LLaVA Visual Description"):
         st.write(llava_description or "No visual description available.")
+
+    if qa_result and not qa_result.get("passed", False):
+        st.error("QA FAILED — not reviewed")
+        for flag in qa_result.get("flags", []):
+            st.warning(flag)
 
     with st.expander("🏥 Final Report", expanded=True):
         st.text_area(
@@ -541,7 +583,7 @@ if result is not None:
         if passed:
             st.success(f"QA Passed — confidence: {confidence}")
         else:
-            st.error("QA Failed")
+            st.error("QA FAILED — not reviewed")
         for flag in qa_result.get("flags", []):
             st.warning(flag)
 

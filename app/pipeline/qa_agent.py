@@ -5,8 +5,12 @@ rule-based validation before final output.
 """
 
 import re
+from typing import Optional
+
+from app.pipeline.lung_rads import check_urgent_findings
 
 _REQUIRED_SECTIONS = ("FINDINGS", "IMPRESSION", "RECOMMENDATIONS")
+_LUNG_RADS_SEPARATOR = re.compile(r"━{8,}")
 _HALLUCINATION_PHRASES = (
     "biopsy recommended",
     "ct scan required",
@@ -49,12 +53,20 @@ def _check_findings_content(report: str) -> list[str]:
     return []
 
 
+def _text_outside_lung_rads_block(report: str) -> str:
+    """Drop text that sits between Lung-RADS separator lines."""
+    parts = _LUNG_RADS_SEPARATOR.split(report)
+    if len(parts) <= 1:
+        return report
+    return parts[0] + parts[-1]
+
+
 def _check_pathology_coverage(report: str, pathology_labels: dict) -> list[str]:
     flags = []
     report_lower = report.lower()
 
     for label, score in pathology_labels.items():
-        if score <= 0.7:
+        if score < 0.70:
             continue
         if label.lower() not in report_lower:
             flags.append(f"High-confidence finding not reported: {label}")
@@ -62,12 +74,81 @@ def _check_pathology_coverage(report: str, pathology_labels: dict) -> list[str]:
     return flags
 
 
+def _check_overstated_confidence(report: str, pathology_labels: dict) -> list[str]:
+    flags = []
+    impression = _extract_section(report, "IMPRESSION").lower()
+    finding_lines = _extract_section(report, "FINDINGS").splitlines()
+    any_high = any(float(score) >= 0.70 for score in pathology_labels.values())
+
+    for label, score in pathology_labels.items():
+        if float(score) >= 0.70:
+            continue
+        label_pattern = re.compile(rf"\b{re.escape(label.lower())}\b")
+        flagged = False
+        for line in finding_lines:
+            line_lower = line.lower()
+            if label_pattern.search(line_lower) and "high confidence" in line_lower:
+                flags.append(f"Overstated confidence: {label}")
+                flagged = True
+                break
+        if flagged:
+            continue
+        if (
+            not any_high
+            and "high confidence" in impression
+            and label_pattern.search(impression)
+        ):
+            flags.append(f"Overstated confidence: {label}")
+
+    return flags
+
+
+def _check_unsupported_diagnosis(report: str, pathology_labels: dict) -> list[str]:
+    if any(float(score) >= 0.70 for score in pathology_labels.values()):
+        return []
+
+    text = _text_outside_lung_rads_block(report).lower()
+    text = text.replace("malignancy risk", "")
+    if re.search(r"\bcancer\b|\bmalignancy\b", text):
+        return ["Unsupported diagnosis"]
+    return []
+
+
+_CONTRADICTION_PATTERN = re.compile(
+    r"\b(clear|normal)\b|no abnormalities",
+    re.IGNORECASE,
+)
+
+
+def _check_contradiction(report: str, pathology_labels: dict) -> list[str]:
+    if not any(float(score) >= 0.50 for score in pathology_labels.values()):
+        return []
+    text = _text_outside_lung_rads_block(report)
+    if _CONTRADICTION_PATTERN.search(text):
+        return [
+            "Contradiction: report describes the study as clear or normal while a score is >= 0.50"
+        ]
+    return []
+
+
+def _check_urgent_in_report(report: str, urgent_flags: list[str]) -> list[str]:
+    flags = []
+    report_lower = report.lower()
+    for finding in urgent_flags or []:
+        if finding.lower() not in report_lower:
+            flags.append(f"Missing urgent finding: {finding}")
+    return flags
+
+
 def _check_hallucinations(report: str) -> list[str]:
     flags = []
     report_lower = report.lower()
+    outside_lower = _text_outside_lung_rads_block(report).lower()
 
     for phrase in _HALLUCINATION_PHRASES:
-        if phrase in report_lower:
+        in_template = "biopsy" in phrase or "ct scan" in phrase
+        haystack = outside_lower if in_template else report_lower
+        if phrase in haystack:
             flags.append(f"Possible hallucination detected: {phrase}")
 
     return flags
@@ -83,16 +164,21 @@ def _score_confidence(flag_count: int) -> str:
 
 def run_qa(
     report: str,
-    pathology_labels: dict,
-    ner_entities: dict,
+    scores: dict,
+    urgent_flags: Optional[list[str]] = None,
 ) -> dict:
-    """Validate a drafted report and return QA results."""
-    del ner_entities  # Reserved for future cross-checks.
+    """Validate a drafted report against the full scores and urgent flags."""
+    if urgent_flags is None:
+        urgent_flags = check_urgent_findings(scores)
 
     flags: list[str] = []
     flags.extend(_check_sections(report))
     flags.extend(_check_findings_content(report))
-    flags.extend(_check_pathology_coverage(report, pathology_labels))
+    flags.extend(_check_pathology_coverage(report, scores))
+    flags.extend(_check_overstated_confidence(report, scores))
+    flags.extend(_check_contradiction(report, scores))
+    flags.extend(_check_unsupported_diagnosis(report, scores))
+    flags.extend(_check_urgent_in_report(report, urgent_flags))
     hallucination_flags = _check_hallucinations(report)
     flags.extend(hallucination_flags)
 

@@ -107,7 +107,7 @@ def main():
     doc.add_heading("4.1 Vision & Pathology Detection (app/vision/torchxray.py)", 2)
     for item in [
         "Uses TorchXRayVision with a DenseNet121 backbone trained on multiple chest X-ray datasets",
-        "Returns confidence scores for 14 pathology classes (e.g., Mass, Nodule, Effusion, Pneumothorax, Cardiomegaly)",
+        "Returns confidence scores for 18 pathologies (e.g., Mass, Nodule, Effusion, Pneumothorax, Cardiomegaly)",
         "Implements Grad-CAM via pytorch-grad-cam targeting model.features.denseblock4",
         "Exposes get_pathology_labels(), get_heatmap(), and get_all_heatmaps() for multi-label views",
     ]:
@@ -147,7 +147,7 @@ def main():
     doc.add_heading("4.6 Report Drafter (app/pipeline/drafter.py)", 2)
     for item in [
         "Generates structured reports in FINDINGS / IMPRESSION / RECOMMENDATIONS format using Llama 3.1 8B via Ollama",
-        "detect_conflict() — flags when LLaVA says normal but pathology scores are high (>0.65); drafter prioritizes quantitative scores",
+        "detect_conflict() — flags when LLaVA says normal but pathology scores are high (>=0.70); drafter prioritizes quantitative scores",
         "generate_patient_summary() — converts clinical reports into plain-English patient-facing summaries with sections: WHAT WE FOUND, WHAT THIS MEANS FOR YOU, WHAT HAPPENS NEXT, WHEN TO SEEK IMMEDIATE HELP",
     ]:
         doc.add_paragraph(item, style="List Bullet")
@@ -250,7 +250,7 @@ def main():
     )
     doc.add_heading("Start (Windows)", 2)
     doc.add_paragraph('$env:PYTHONIOENCODING = "utf-8"')
-    doc.add_paragraph("python -m streamlit run app/main.py --server.headless true")
+    doc.add_paragraph("python -m streamlit run app/main.py")
     doc.add_paragraph(
         "Usage: Open the local URL → upload chest X-ray → click Run Analysis → "
         "review scores, heatmaps, bounding boxes, Lung-RADS, and download the report."

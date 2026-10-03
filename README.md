@@ -1,15 +1,12 @@
 # 🫁 Radiology Report Copilot
 
-> AI-powered chest X-ray analysis with Grad-CAM localization,
-> Lung-RADS risk scoring, and structured clinical report 
+> AI-powered frontal (PA/AP) chest X-ray analysis with Grad-CAM localization,
+> a Lung-RADS-inspired risk category, and structured clinical report
 > generation. Runs 100% locally — no data leaves your machine.
-
-## Demo
-[Add GIF here after recording]
 
 ## What it does
 
-Upload a chest X-ray and the app analyzes it in under two minutes: a vision model scores 14 pathologies, Grad-CAM highlights where the model is looking, LLaVA describes what it sees, a local LLM drafts a structured report, Lung-RADS assigns a malignancy risk category, and a rule-based QA check validates the output before you download a complete clinical document.
+Frontal (PA/AP) chest X-rays only. Upload an image and the app analyzes it in under two minutes: a vision model scores 18 pathologies, Grad-CAM highlights where the model is looking, LLaVA describes what it sees, a local LLM writes the impression, Lung-RADS-inspired scoring assigns a risk category (Lung-RADS is designed for CT; used here as a reference scale), and a rule-based QA check validates the output before you download a complete clinical document.
 
 ## Pipeline Architecture
 
@@ -30,9 +27,9 @@ flowchart LR
 
 | Stage | Module | Output |
 |-------|--------|--------|
-| 1. Vision | `app/vision/torchxray.py` | Top-5 pathology scores |
+| 1. Vision | `app/vision/torchxray.py` | 18 pathology scores (top 5 shown in the UI) |
 | 2. Localization | `app/vision/torchxray.py`, `app/vision/bbox.py` | Grad-CAM heatmap and anatomical bounding boxes |
-| 3. Risk scoring | `app/pipeline/lung_rads.py` | Lung-RADS 1–4X category |
+| 3. Risk scoring | `app/pipeline/lung_rads.py` | Lung-RADS-inspired risk category (Lung-RADS is designed for CT; used here as a reference scale) |
 | 4. Description | `app/vision/llava_client.py` | Clinical visual findings |
 | 5. NER | `app/utils/ner.py` | Structured clinical entities |
 | 6. Drafting | `app/pipeline/drafter.py` | FINDINGS / IMPRESSION / RECOMMENDATIONS |
@@ -43,10 +40,10 @@ Orchestration is handled by a LangGraph state machine in `app/pipeline/graph.py`
 
 ## Features
 
-- **14-class pathology detection** via TorchXRayVision DenseNet121
+- **18 pathologies** detected via TorchXRayVision DenseNet121
 - **Grad-CAM heatmaps** with a live multi-label switcher
 - **Bounding-box localization** with a 3×3 anatomical region map (`app/vision/bbox.py`)
-- **Lung-RADS 1.1** automated risk categorization (ACR guidelines)
+- **Lung-RADS-inspired risk category** (Lung-RADS is designed for CT; used here as a reference scale)
 - **LLaVA visual description** via local Ollama
 - **Structured report generation** with Llama 3.1 8B
 - **Plain-English patient summary** via `generate_patient_summary()` in `app/pipeline/drafter.py`
@@ -64,7 +61,7 @@ Orchestration is handled by a LangGraph state machine in `app/pipeline/graph.py`
 | Report drafting | Llama 3.1 8B (Ollama) |
 | Pipeline orchestration | LangGraph |
 | Clinical NER | scispaCy `en_core_sci_sm` |
-| Risk scoring | Custom Lung-RADS 1.1 engine |
+| Risk scoring | Lung-RADS-inspired reference scale (designed for CT) |
 | Web UI | Streamlit |
 | Testing | pytest |
 
@@ -103,7 +100,7 @@ cp .env.example .env
 
 ```powershell
 $env:PYTHONIOENCODING = "utf-8"
-python -m streamlit run app/main.py --server.headless true
+python -m streamlit run app/main.py
 ```
 
 TorchXRayVision downloads model weights (~28 MB) on first run to `~/.torchxrayvision/`.
@@ -111,11 +108,11 @@ TorchXRayVision downloads model weights (~28 MB) on first run to `~/.torchxrayvi
 ## Usage
 
 ```bash
-streamlit run app/main.py
+python -m streamlit run app/main.py
 ```
 
 1. Open `http://localhost:8501`
-2. Upload a chest X-ray (PNG, JPG, or DICOM)
+2. Upload a frontal (PA/AP) chest X-ray (PNG or JPG)
 3. Click **Run Analysis** (~90 seconds first run)
 4. Review pathology scores, Grad-CAM heatmap, bounding boxes, Lung-RADS category, and final report
 5. Download the full clinical report as a timestamped `.txt` file

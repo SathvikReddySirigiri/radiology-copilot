@@ -38,11 +38,9 @@ def describe_xray(image: Image.Image) -> str:
     payload = {
         "model": MODEL_VISION,
         "prompt": (
-            "You are a radiology assistant. Look at this chest "
-            "X-ray carefully. Describe only what you can see: "
-            "any opacities, masses, effusions, or abnormalities. "
-            "Be concise and use medical terminology. "
-            "If the image looks normal, say so clearly."
+            "This is a frontal (PA or AP) chest X-ray. Describe up to 5 visible "
+            "findings as short bullet points. Do not give a diagnosis. "
+            "If unsure, say 'uncertain'."
         ),
         "images": [b64_image],
         "stream": False,

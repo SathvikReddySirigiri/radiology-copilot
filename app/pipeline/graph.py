@@ -9,17 +9,20 @@ from typing import Optional, TypedDict
 from langgraph.graph import END, START, StateGraph
 from PIL import Image
 
-from app.pipeline.drafter import draft_report
+from app.pipeline.drafter import detect_conflict, draft_report
 from app.pipeline.lung_rads import LungRADSResult
 from app.pipeline.qa_agent import run_qa
 from app.utils.ner import extract_entities
 from app.vision.llava_client import describe_xray
-from app.vision.torchxray import get_pathology_labels
+from app.vision.torchxray import get_all_scores
 
 
 class ReportState(TypedDict):
     image: Image.Image
     pathology_labels: dict
+    all_scores: dict
+    urgent_findings: list
+    conflict: dict
     heatmap_result: dict
     all_heatmaps: dict
     lung_rads: Optional[LungRADSResult]
@@ -37,9 +40,20 @@ def _append_error(existing: str, message: str) -> str:
     return message
 
 
+def _full_scores(state: ReportState) -> dict:
+    all_scores = state.get("all_scores")
+    if all_scores:
+        return all_scores
+    return state.get("pathology_labels", {})
+
+
 def run_vision(state: ReportState) -> dict:
     try:
-        return {"pathology_labels": get_pathology_labels(state["image"])}
+        all_scores = get_all_scores(state["image"])
+        return {
+            "all_scores": all_scores,
+            "pathology_labels": dict(list(all_scores.items())[:5]),
+        }
     except Exception as exc:
         return {"error": _append_error(state.get("error", ""), str(exc))}
 
@@ -72,10 +86,13 @@ def run_heatmap(state: ReportState) -> dict:
 
 def run_lung_rads(state: ReportState) -> dict:
     try:
-        from app.pipeline.lung_rads import score_lung_rads
+        from app.pipeline.lung_rads import check_urgent_findings, score_lung_rads
 
-        result = score_lung_rads(state["pathology_labels"])
-        return {"lung_rads": result}
+        scores = _full_scores(state)
+        return {
+            "lung_rads": score_lung_rads(scores),
+            "urgent_findings": check_urgent_findings(scores),
+        }
     except Exception as exc:
         return {"error": _append_error(state.get("error", ""), str(exc))}
 
@@ -96,13 +113,18 @@ def run_ner(state: ReportState) -> dict:
 
 def run_drafter(state: ReportState) -> dict:
     try:
+        scores = _full_scores(state)
+        conflict = detect_conflict(state.get("llava_description", ""), scores)
         return {
+            "conflict": conflict,
             "draft": draft_report(
-                state["pathology_labels"],
+                scores,
                 state["llava_description"],
                 state["ner_entities"],
                 lung_rads=state.get("lung_rads"),
-            )
+                urgent_findings=state.get("urgent_findings"),
+                conflict=conflict,
+            ),
         }
     except Exception as exc:
         return {"error": _append_error(state.get("error", ""), str(exc))}
@@ -113,8 +135,8 @@ def run_qa_node(state: ReportState) -> dict:
         return {
             "qa_result": run_qa(
                 state["draft"],
-                state["pathology_labels"],
-                state["ner_entities"],
+                _full_scores(state),
+                state.get("urgent_findings") or [],
             )
         }
     except Exception as exc:
@@ -123,37 +145,11 @@ def run_qa_node(state: ReportState) -> dict:
 
 def finalize(state: ReportState) -> dict:
     try:
-        from datetime import datetime
-
         qa_result = state.get("qa_result") or {}
-        body = qa_result.get("approved_report") or state.get("draft", "")
-
-        header = f"""
-RADIOLOGY REPORT — AI ASSISTED
-Generated : {datetime.now().strftime("%Y-%m-%d %H:%M")}
-System    : Radiology Copilot v1.0
-Models    : TorchXRayVision + LLaVA + Llama 3.1 8B
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PATHOLOGY SCORES (TorchXRayVision):
-"""
-        for label, score in sorted(
-            state.get("pathology_labels", {}).items(),
-            key=lambda item: item[1],
-            reverse=True,
-        )[:5]:
-            bar = "█" * int(score * 10) + "░" * (10 - int(score * 10))
-            header += f"  {label:<20} {bar} {score:.0%}\n"
-
-        header += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-
-        full_report = header + "\n" + body
-        updates = {"final_report": full_report}
-
-        if not qa_result.get("passed"):
-            qa_error = "QA failed: " + str(qa_result.get("flags", []))
-            updates["error"] = _append_error(state.get("error", ""), qa_error)
-
-        return updates
+        report_text = state.get("draft", "")
+        if qa_result.get("passed") and qa_result.get("approved_report"):
+            report_text = qa_result["approved_report"]
+        return {"final_report": report_text}
     except Exception as exc:
         return {"error": _append_error(state.get("error", ""), str(exc))}
 
@@ -186,6 +182,9 @@ def run_pipeline(image: Image.Image) -> dict:
     initial_state: ReportState = {
         "image": image,
         "pathology_labels": {},
+        "all_scores": {},
+        "urgent_findings": [],
+        "conflict": {},
         "heatmap_result": {},
         "all_heatmaps": {},
         "lung_rads": None,

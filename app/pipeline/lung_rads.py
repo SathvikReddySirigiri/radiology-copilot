@@ -85,7 +85,7 @@ _DISPLAY_MAP = {
         "action_items": [
             "Schedule routine annual screening",
             "Maintain healthy lifestyle",
-            "No immediate action required",
+            "No additional action required",
         ],
     },
     "2": {
@@ -94,7 +94,7 @@ _DISPLAY_MAP = {
         "action_items": [
             "Schedule routine annual screening",
             "Maintain healthy lifestyle",
-            "No immediate action required",
+            "No additional action required",
         ],
     },
     "3": {
@@ -110,7 +110,7 @@ _DISPLAY_MAP = {
         "color": "#e67e22",
         "emoji": "🟠",
         "action_items": [
-            "Schedule 3-month CT or PET/CT urgently",
+            "Schedule 3-month CT or PET/CT",
             "Consult pulmonologist",
             "Document nodule characteristics",
         ],
@@ -159,6 +159,14 @@ def _build_result(category: str, finding_description: Optional[str] = None) -> L
         follow_up_months=meta["follow_up_months"],
         urgent=meta["urgent"],
     )
+
+
+def check_urgent_findings(scores: dict) -> list[str]:
+    """Flag findings that need urgent review, separate from the Lung-RADS category."""
+    flags = []
+    if _label_score(scores, "Pneumothorax") >= 0.60:
+        flags.append("Possible pneumothorax — urgent clinical review")
+    return flags
 
 
 def score_lung_rads(

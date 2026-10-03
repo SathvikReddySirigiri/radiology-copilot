@@ -119,29 +119,34 @@ def _cleanup_memory() -> None:
         torch.cuda.empty_cache()
 
 
-def get_pathology_labels(image: Image.Image) -> dict:
-    """Run chest X-ray pathology inference and return the top 5 labels."""
+def get_all_scores(image: Image.Image) -> dict:
+    """Return every non-empty pathology score, rounded and sorted high to low."""
     tensor = _preprocess(image)
 
     with torch.no_grad():
         scores = _MODEL(tensor).squeeze(0)
 
-    top_values, top_indices = torch.topk(scores, k=min(_TOP_K, scores.numel()))
-
-    labels = {}
-    for value, index in zip(top_values, top_indices):
-        raw_label = _MODEL.pathologies[index.item()]
+    labeled = []
+    for index, value in enumerate(scores.tolist()):
+        raw_label = _MODEL.pathologies[index]
         if not raw_label:
             continue
-        labels[_format_label(raw_label)] = round(value.item(), 2)
+        labeled.append((_format_label(raw_label), round(float(value), 2)))
 
-    if scores.numel() > 0 and torch.all(scores < _CONFIDENCE_THRESHOLD):
+    labeled.sort(key=lambda item: item[1], reverse=True)
+
+    if labeled and all(score < _CONFIDENCE_THRESHOLD for _, score in labeled):
         print(
             "Warning: All pathology confidences are below 0.3 — "
             "this may indicate a normal chest X-ray."
         )
 
-    return labels
+    return dict(labeled)
+
+
+def get_pathology_labels(image: Image.Image) -> dict:
+    """Run chest X-ray pathology inference and return the top 5 labels."""
+    return dict(list(get_all_scores(image).items())[:_TOP_K])
 
 
 def get_heatmap(image: Image.Image, target_label: str = None) -> dict:
